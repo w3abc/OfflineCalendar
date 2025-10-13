@@ -1,12 +1,15 @@
 import sys
+import re
+import json
 from datetime import datetime
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout, 
-    QGridLayout, QPushButton, QComboBox, QFrame
+    QGridLayout, QPushButton, QComboBox, QFrame, QDialog, QTextEdit, 
+    QSpinBox, QMessageBox, QDialogButtonBox
 )
-from lunar_python import Solar, SolarMonth
-from lunar_python.util import HolidayUtil
+from lunar_python import Solar, SolarMonth, Lunar
+from lunar_python.util import HolidayUtil, LunarUtil, SolarUtil
 
 class DayCell(QFrame):
     """Custom widget for a single day in the calendar grid."""
@@ -89,8 +92,21 @@ class DayCell(QFrame):
         self.style().polish(self)
 
 class MainWindow(QMainWindow):
+    def load_user_holidays(self):
+        holidays_file = "user_holidays.json"
+        try:
+            with open(holidays_file, "r") as f:
+                user_data = json.load(f)
+                if isinstance(user_data, dict):
+                    for year, data_string in user_data.items():
+                        HolidayUtil.fix(None, data_string)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass # File doesn't exist or is invalid, just ignore
+
     def __init__(self):
         super().__init__()
+        self.load_user_holidays()
+
         self.setWindowTitle("离线日历")
         self.setGeometry(100, 100, 1100, 700)
         self.selected_cell = None
@@ -120,6 +136,7 @@ class MainWindow(QMainWindow):
         self.year_combo.currentIndexChanged.connect(self.on_date_change)
         self.month_combo.currentIndexChanged.connect(self.on_date_change)
         self.holiday_combo.currentIndexChanged.connect(self.on_holiday_selected)
+        self.import_button.clicked.connect(self.on_import_holidays_clicked)
         self.today_button.clicked.connect(self.go_to_today)
 
         # --- Initial Draw & Style ---
@@ -127,6 +144,160 @@ class MainWindow(QMainWindow):
         self.update_combo_boxes()
         self.update_holiday_combo()
         self.draw_calendar()
+
+    def parse_holiday_text(self, year, text):
+        from datetime import timedelta
+        from lunar_python import Lunar
+
+        data_string = ""
+        name_to_index = {name: i for i, name in enumerate(HolidayUtil.NAMES)}
+
+        # 更健壮的正则表达式和配置
+        holiday_configs = {
+            "元旦": {
+                "pattern": r"元旦：(\d+)月(\d+)日.*?放假",
+                "groups": ["m", "d"],
+                "workday_group": False
+            },
+            "春节": {
+                "pattern": r"春节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假.*?([\d月日、]+)上班",
+                "groups": ["sm", "sd", "em", "ed", "work"],
+                "workday_group": True
+            },
+            "清明节": {
+                "pattern": r"清明节：(\d+)月(\d+)日.*?至.*?(\d+)日",
+                "groups": ["sm", "sd", "ed"],
+                "workday_group": False
+            },
+            "劳动节": {
+                "pattern": r"劳动节：(\d+)月(\d+)日.*?至.*?(\d+)日.*?放假.*?([\d月日、]+)上班",
+                "groups": ["sm", "sd", "ed", "work"],
+                "workday_group": True
+            },
+            "端午节": {
+                "pattern": r"端午节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日",
+                "groups": ["sm", "sd", "em", "ed"],
+                "workday_group": False
+            },
+            "国庆节、中秋节": {
+                "pattern": r"国庆节、中秋节：(\d+)月(\d+)日.*?至.*?(\d+)日.*?放假.*?([\d月日、]+)上班",
+                "groups": ["sm", "sd", "ed", "work"],
+                "workday_group": True
+            }
+        }
+
+        for holiday_name, config in holiday_configs.items():
+            match = re.search(config["pattern"], text, re.DOTALL)
+            if not match:
+                continue
+
+            parts = {name: val for name, val in zip(config["groups"], match.groups())}
+            
+            vacation_days = []
+            work_days = []
+
+            # --- 日期提取 ---
+            sm = int(parts.get("sm", parts.get("m")))
+            sd = int(parts.get("sd", parts.get("d")))
+            em = int(parts.get("em", sm)) # 如果没有结束月份，则使用开始月份
+            ed = int(parts.get("ed", sd)) # 如果没有结束日期，则使用开始日期
+
+            start_date = datetime(year, sm, sd)
+            end_date = datetime(year, em, ed)
+            current_date = start_date
+            while current_date <= end_date:
+                vacation_days.append(current_date)
+                current_date += timedelta(days=1)
+
+            if config["workday_group"]:
+                work_days_text = parts.get("work", "")
+                work_day_matches = re.findall(r"(\d+)月(\d+)日", work_days_text)
+                for wm, wd in work_day_matches:
+                    work_days.append(datetime(year, int(wm), int(wd)))
+
+            # --- 目标日期和名称索引 ---
+            target_date_str = ""
+            name_index = -1
+            if holiday_name == "国庆节、中秋节":
+                name_index = name_to_index.get("国庆中秋")
+                target_date_str = datetime(year, 10, 1).strftime("%Y%m%d")
+            else:
+                name_index = name_to_index.get(holiday_name)
+            
+            if name_index is None:
+                continue
+
+            if not target_date_str:
+                # 查找节日的标准日期
+                canonical_date_found = False
+                for month_day, name in LunarUtil.FESTIVAL.items():
+                    if name == holiday_name:
+                        m, d = map(int, month_day.split('-'))
+                        target_date_str = Lunar.fromYmd(year, m, d).getSolar().toYmd().replace("-","")
+                        canonical_date_found = True
+                        break
+                if not canonical_date_found:
+                     for month_day, name in SolarUtil.FESTIVAL.items():
+                        if name == holiday_name:
+                            m, d = map(int, month_day.split('-'))
+                            target_date_str = datetime(year, m, d).strftime("%Y%m%d")
+                            break
+            
+            if not target_date_str or name_index < 0:
+                continue
+
+            # --- 生成数据字符串 ---
+            for day in vacation_days:
+                day_str = day.strftime("%Y%m%d")
+                data_string += f"{day_str}{name_index}1{target_date_str}"
+            
+            for day in work_days:
+                day_str = day.strftime("%Y%m%d")
+                data_string += f"{day_str}{name_index}0{target_date_str}"
+
+        return data_string
+
+    def on_import_holidays_clicked(self):
+        dialog = ImportDialog(self, self.year)
+        if dialog.exec():
+            year, text = dialog.get_data()
+            if not text.strip():
+                QMessageBox.warning(self, "警告", "输入的文本不能为空。")
+                return
+            
+            try:
+                data_str = self.parse_holiday_text(year, text)
+                if not data_str:
+                    QMessageBox.warning(self, "失败", "未能从文本中解析出有效的假期数据。")
+                    return
+
+                holidays_file = "user_holidays.json"
+                user_data = {}
+                try:
+                    with open(holidays_file, "r") as f:
+                        existing_data = json.load(f)
+                        if isinstance(existing_data, dict):
+                            user_data = existing_data
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+
+                user_data[str(year)] = data_str
+
+                with open(holidays_file, "w") as f:
+                    json.dump(user_data, f, ensure_ascii=False, indent=4)
+
+                # Apply the new data to the current session and refresh
+                HolidayUtil.fix(None, data_str)
+                self.update_holiday_combo()
+                self.draw_calendar()
+
+                QMessageBox.information(self, "成功", f"成功为 {year} 年导入并保存了假期数据。")
+
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"解析或保存数据时发生错误：\n{e}")
+
+
+
 
     def setup_left_panel(self):
         self.left_panel = QWidget()
@@ -209,6 +380,7 @@ class MainWindow(QMainWindow):
         self.month_combo = QComboBox()
         self.month_combo.addItems([str(m) for m in range(1, 13)])
         self.holiday_combo = QComboBox()
+        self.import_button = QPushButton("导入假期")
         self.today_button = QPushButton("今天")
 
         controls_layout.addWidget(self.year_combo)
@@ -218,6 +390,7 @@ class MainWindow(QMainWindow):
         controls_layout.addSpacing(20)
         controls_layout.addWidget(self.holiday_combo)
         controls_layout.addStretch()
+        controls_layout.addWidget(self.import_button)
         controls_layout.addWidget(self.today_button)
 
         self.calendar_grid = QGridLayout()
@@ -453,6 +626,41 @@ class MainWindow(QMainWindow):
                 self.update_holiday_combo()
                 
             self.draw_calendar()
+
+
+class ImportDialog(QDialog):
+    def __init__(self, parent=None, year=2025):
+        super().__init__(parent)
+        self.setWindowTitle("导入假期安排")
+        self.setMinimumSize(500, 400)
+
+        layout = QVBoxLayout(self)
+
+        instructions = QLabel("请选择年份，并将该年份的假期安排文本粘贴到下方：")
+        layout.addWidget(instructions)
+
+        year_layout = QHBoxLayout()
+        year_layout.addWidget(QLabel("年份："))
+        self.year_spinbox = QSpinBox()
+        self.year_spinbox.setRange(2000, 2100)
+        self.year_spinbox.setValue(year)
+        year_layout.addWidget(self.year_spinbox)
+        year_layout.addStretch()
+        layout.addLayout(year_layout)
+
+        self.text_edit = QTextEdit()
+        layout.addWidget(self.text_edit)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.button(QDialogButtonBox.Ok).setText("导入")
+        button_box.button(QDialogButtonBox.Cancel).setText("取消")
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def get_data(self):
+        return self.year_spinbox.value(), self.text_edit.toPlainText()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
