@@ -23,17 +23,21 @@ class DayCell(QFrame):
         self.layout().setSpacing(0)
 
         self.solar_label = QLabel()
+        self.major_festival_label = QLabel()
         self.lunar_label = QLabel()
         self.holiday_label = QLabel(self)
 
         self.solar_label.setAlignment(Qt.AlignCenter)
+        self.major_festival_label.setAlignment(Qt.AlignCenter)
         self.lunar_label.setAlignment(Qt.AlignCenter)
 
         self.solar_label.setObjectName("solar_label")
+        self.major_festival_label.setObjectName("major_festival_label")
         self.lunar_label.setObjectName("lunar_label")
         self.holiday_label.setObjectName("holiday_label")
 
         self.layout().addWidget(self.solar_label)
+        self.layout().addWidget(self.major_festival_label)
         self.layout().addWidget(self.lunar_label)
 
         if self.solar_day:
@@ -42,6 +46,12 @@ class DayCell(QFrame):
     def set_day(self):
         lunar_day = self.solar_day.getLunar()
         self.solar_label.setText(str(self.solar_day.getDay()))
+
+        major_lunar_festivals = lunar_day.getFestivals()
+        major_solar_festivals = self.solar_day.getFestivals()
+        all_major_festivals = major_lunar_festivals + major_solar_festivals
+        self.major_festival_label.setText(all_major_festivals[0] if all_major_festivals else "")
+
         lunar_text = f"{lunar_day.getMonthInChinese()}月{lunar_day.getDayInChinese()}"
         self.lunar_label.setText(lunar_day.getJieQi() or lunar_text)
 
@@ -287,6 +297,7 @@ class MainWindow(QMainWindow):
             }
 
             DayCell #solar_label { font-size: 18pt; font-weight: bold; padding: 2px;}
+            DayCell #major_festival_label { color: #e13844; font-size: 9pt; font-weight: bold; }
             DayCell #lunar_label { color: #888; font-size: 10pt; }
             DayCell #holiday_label { font-size: 9pt; font-weight: bold; padding: 2px; }
 
@@ -350,8 +361,8 @@ class MainWindow(QMainWindow):
         self.details_lunar_weekday_label.setText(f"{lunar_day.getMonthInChinese()}月{lunar_day.getDayInChinese()} 星期{solar_day.getWeekInChinese()}")
         self.details_ganzhi_label.setText(f"{lunar_day.getYearInGanZhi()}年 {lunar_day.getMonthInGanZhi()}月 {lunar_day.getDayInGanZhi()}日 【属{lunar_day.getYearShengXiao()}】")
 
-        other_festivals = solar_day.getOtherFestivals()
-        festivals = lunar_day.getFestivals() + ([f for f in other_festivals if f not in lunar_day.getFestivals()])
+        festivals = lunar_day.getFestivals() + solar_day.getFestivals() + solar_day.getOtherFestivals()
+        festivals = list(dict.fromkeys(festivals))
         self.details_festivals_label.setText(" ".join(festivals) or "")
         
         self.details_yi_label.setText(" ".join(lunar_day.getDayYi()))
