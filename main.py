@@ -93,8 +93,13 @@ class DayCell(QFrame):
         self.style().polish(self)
 
 class MainWindow(QMainWindow):
+    def _get_user_holidays_path(self):
+        config_dir = os.path.expanduser("~/.config/OfflineCalendar")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "user_holidays.json")
+
     def load_user_holidays(self):
-        holidays_file = "user_holidays.json"
+        holidays_file = self._get_user_holidays_path()
         try:
             with open(holidays_file, "r") as f:
                 user_data = json.load(f)
@@ -108,7 +113,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.load_user_holidays()
 
-        self.setWindowTitle("离线日历")
+        self.setWindowTitle("万年历本地版")
+        self.setObjectName("WanNianLiBenDiBan")
         self.setGeometry(100, 100, 1100, 700)
         self.selected_cell = None
         self.app = QApplication.instance()
@@ -242,7 +248,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "失败", "未能从文本中解析出有效的假期数据。")
                     return
 
-                holidays_file = "user_holidays.json"
+                holidays_file = self._get_user_holidays_path()
                 user_data = {}
                 try:
                     with open(holidays_file, "r") as f:
