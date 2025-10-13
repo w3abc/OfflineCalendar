@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1100, 700)
         self.selected_cell = None
         self.app = QApplication.instance()
+        self.holiday_dates = {}
 
         # --- Date State ---
         today = datetime.now()
@@ -118,11 +119,13 @@ class MainWindow(QMainWindow):
         # --- Connect Signals ---
         self.year_combo.currentIndexChanged.connect(self.on_date_change)
         self.month_combo.currentIndexChanged.connect(self.on_date_change)
+        self.holiday_combo.currentIndexChanged.connect(self.on_holiday_selected)
         self.today_button.clicked.connect(self.go_to_today)
 
         # --- Initial Draw & Style ---
         self.setup_styles()
         self.update_combo_boxes()
+        self.update_holiday_combo()
         self.draw_calendar()
 
     def setup_left_panel(self):
@@ -205,12 +208,15 @@ class MainWindow(QMainWindow):
         self.year_combo.addItems([str(y) for y in range(1901, 2101)])
         self.month_combo = QComboBox()
         self.month_combo.addItems([str(m) for m in range(1, 13)])
+        self.holiday_combo = QComboBox()
         self.today_button = QPushButton("今天")
 
         controls_layout.addWidget(self.year_combo)
         controls_layout.addWidget(QLabel("年"))
         controls_layout.addWidget(self.month_combo)
         controls_layout.addWidget(QLabel("月"))
+        controls_layout.addSpacing(20)
+        controls_layout.addWidget(self.holiday_combo)
         controls_layout.addStretch()
         controls_layout.addWidget(self.today_button)
 
@@ -368,10 +374,53 @@ class MainWindow(QMainWindow):
         self.details_yi_label.setText(" ".join(lunar_day.getDayYi()))
         self.details_ji_label.setText(" ".join(lunar_day.getDayJi()))
 
+    def update_holiday_combo(self):
+        self.holiday_combo.blockSignals(True)
+        self.holiday_combo.clear()
+        self.holiday_dates.clear()
+        self.holiday_combo.addItem("选择法定节假日", None)
+
+        holidays = HolidayUtil.getHolidays(self.year)
+        if holidays:
+            for h in holidays:
+                # Only add the main holiday day, not the compensated work days
+                if not h.isWork() and h.getDay() == h.getTarget():
+                    name = h.getName()
+                    if name not in self.holiday_dates:
+                        date_str = h.getDay()
+                        parts = date_str.split('-')
+                        year = int(parts[0])
+                        month = int(parts[1])
+                        day = int(parts[2])
+                        self.holiday_dates[name] = Solar.fromYmd(year, month, day)
+        
+        for name in self.holiday_dates.keys():
+            self.holiday_combo.addItem(name)
+
+        self.holiday_combo.blockSignals(False)
+
+    def on_holiday_selected(self, index):
+        if index <= 0: # Ignore the placeholder
+            return
+        
+        name = self.holiday_combo.itemText(index)
+        solar_day = self.holiday_dates.get(name)
+
+        if solar_day:
+            self.year = solar_day.getYear()
+            self.month = solar_day.getMonth()
+            self.day = solar_day.getDay()
+            self.update_combo_boxes()
+            self.draw_calendar()
+
+
     def on_date_change(self):
+        old_year = self.year
         self.year = int(self.year_combo.currentText())
         self.month = int(self.month_combo.currentText())
         self.day = 1
+        if old_year != self.year:
+            self.update_holiday_combo()
         self.draw_calendar()
 
     def go_to_today(self):
@@ -389,13 +438,20 @@ class MainWindow(QMainWindow):
             self.update_combo_boxes()
 
     def update_combo_boxes(self):
-        if self.year != int(self.year_combo.currentText()) or self.month != int(self.month_combo.currentText()):
+        old_year = int(self.year_combo.currentText())
+        year_changed = self.year != old_year
+
+        if year_changed or self.month != int(self.month_combo.currentText()):
             self.year_combo.blockSignals(True)
             self.month_combo.blockSignals(True)
             self.year_combo.setCurrentText(str(self.year))
             self.month_combo.setCurrentText(str(self.month))
             self.year_combo.blockSignals(False)
             self.month_combo.blockSignals(False)
+            
+            if year_changed:
+                self.update_holiday_combo()
+                
             self.draw_calendar()
 
 if __name__ == "__main__":
