@@ -376,10 +376,17 @@ class MainWindow(QMainWindow):
 
     def go_to_today(self):
         today = datetime.now()
+        current_year = int(self.year_combo.currentText())
+        current_month = int(self.month_combo.currentText())
+
         self.year = today.year
         self.month = today.month
         self.day = today.day
-        self.update_combo_boxes()
+
+        if self.year == current_year and self.month == current_month:
+            self.on_day_selected(Solar.fromYmd(self.year, self.month, self.day))
+        else:
+            self.update_combo_boxes()
 
     def update_combo_boxes(self):
         if self.year != int(self.year_combo.currentText()) or self.month != int(self.month_combo.currentText()):
