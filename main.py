@@ -1,6 +1,7 @@
 import sys
 import re
 import json
+import os
 from datetime import datetime
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -152,37 +153,30 @@ class MainWindow(QMainWindow):
         data_string = ""
         name_to_index = {name: i for i, name in enumerate(HolidayUtil.NAMES)}
 
-        # 更健壮的正则表达式和配置
         holiday_configs = {
-            "元旦": {
+            "元旦节": {
                 "pattern": r"元旦：(\d+)月(\d+)日.*?放假",
                 "groups": ["m", "d"],
-                "workday_group": False
             },
             "春节": {
-                "pattern": r"春节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假.*?([\d月日、]+)上班",
+                "pattern": r"春节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假.*?((?:.|\n)+?上班)",
                 "groups": ["sm", "sd", "em", "ed", "work"],
-                "workday_group": True
             },
             "清明节": {
-                "pattern": r"清明节：(\d+)月(\d+)日.*?至.*?(\d+)日",
+                "pattern": r"清明节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假",
                 "groups": ["sm", "sd", "ed"],
-                "workday_group": False
             },
             "劳动节": {
-                "pattern": r"劳动节：(\d+)月(\d+)日.*?至.*?(\d+)日.*?放假.*?([\d月日、]+)上班",
+                "pattern": r"劳动节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假.*?((?:.|\n)+?上班)",
                 "groups": ["sm", "sd", "ed", "work"],
-                "workday_group": True
             },
             "端午节": {
-                "pattern": r"端午节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日",
+                "pattern": r"端午节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假",
                 "groups": ["sm", "sd", "em", "ed"],
-                "workday_group": False
             },
-            "国庆节、中秋节": {
-                "pattern": r"国庆节、中秋节：(\d+)月(\d+)日.*?至.*?(\d+)日.*?放假.*?([\d月日、]+)上班",
+            "国庆中秋": {
+                "pattern": r"国庆节、中秋节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假.*?((?:.|\n)+?上班)",
                 "groups": ["sm", "sd", "ed", "work"],
-                "workday_group": True
             }
         }
 
@@ -196,57 +190,34 @@ class MainWindow(QMainWindow):
             vacation_days = []
             work_days = []
 
-            # --- 日期提取 ---
-            sm = int(parts.get("sm", parts.get("m")))
-            sd = int(parts.get("sd", parts.get("d")))
-            em = int(parts.get("em", sm)) # 如果没有结束月份，则使用开始月份
-            ed = int(parts.get("ed", sd)) # 如果没有结束日期，则使用开始日期
+            try:
+                sm = int(parts.get("sm", parts.get("m")))
+                sd = int(parts.get("sd", parts.get("d")))
+                em = int(parts.get("em", sm))
+                ed = int(parts.get("ed", sd))
 
-            start_date = datetime(year, sm, sd)
-            end_date = datetime(year, em, ed)
-            current_date = start_date
-            while current_date <= end_date:
-                vacation_days.append(current_date)
-                current_date += timedelta(days=1)
+                start_date = datetime(year, sm, sd)
+                end_date = datetime(year, em, ed)
+                current_date = start_date
+                while current_date <= end_date:
+                    vacation_days.append(current_date)
+                    current_date += timedelta(days=1)
+            except (ValueError, TypeError):
+                continue
 
-            if config["workday_group"]:
+            if "work" in parts:
                 work_days_text = parts.get("work", "")
                 work_day_matches = re.findall(r"(\d+)月(\d+)日", work_days_text)
                 for wm, wd in work_day_matches:
                     work_days.append(datetime(year, int(wm), int(wd)))
 
-            # --- 目标日期和名称索引 ---
-            target_date_str = ""
-            name_index = -1
-            if holiday_name == "国庆节、中秋节":
-                name_index = name_to_index.get("国庆中秋")
-                target_date_str = datetime(year, 10, 1).strftime("%Y%m%d")
-            else:
-                name_index = name_to_index.get(holiday_name)
-            
+            name_index = name_to_index.get(holiday_name)
             if name_index is None:
                 continue
 
-            if not target_date_str:
-                # 查找节日的标准日期
-                canonical_date_found = False
-                for month_day, name in LunarUtil.FESTIVAL.items():
-                    if name == holiday_name:
-                        m, d = map(int, month_day.split('-'))
-                        target_date_str = Lunar.fromYmd(year, m, d).getSolar().toYmd().replace("-","")
-                        canonical_date_found = True
-                        break
-                if not canonical_date_found:
-                     for month_day, name in SolarUtil.FESTIVAL.items():
-                        if name == holiday_name:
-                            m, d = map(int, month_day.split('-'))
-                            target_date_str = datetime(year, m, d).strftime("%Y%m%d")
-                            break
-            
-            if not target_date_str or name_index < 0:
-                continue
+            # Use the first day of the vacation as the target date for simplicity and consistency
+            target_date_str = vacation_days[0].strftime("%Y%m%d")
 
-            # --- 生成数据字符串 ---
             for day in vacation_days:
                 day_str = day.strftime("%Y%m%d")
                 data_string += f"{day_str}{name_index}1{target_date_str}"
@@ -291,7 +262,7 @@ class MainWindow(QMainWindow):
                 self.update_holiday_combo()
                 self.draw_calendar()
 
-                QMessageBox.information(self, "成功", f"成功为 {year} 年导入并保存了假期数据。")
+                QMessageBox.information(self, "成功", f"成功为 {year} 年导入并保存了假期数据。\n\n文件已保存至：{os.path.abspath(holidays_file)}")
 
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"解析或保存数据时发生错误：\n{e}")
