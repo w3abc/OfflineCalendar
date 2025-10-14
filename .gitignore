@@ -15,6 +15,18 @@ dist/
 # PyInstaller
 *.spec
 
+# AppImage 构建文件
+appimage/appimagetool-*.AppImage
+appimage/squashfs-root/
+appimage/*.AppImage
+appimage/WanNianLi.AppDir/
+
+# 安装脚本生成的文件
+wannianli-icon.png
+
+# 安装脚本日志
+*.log
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -40,3 +52,40 @@ venv/
 
 # OS-specific files
 .DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak
+*~
+
+# 压缩文件（除非特别需要）
+*.zip
+*.tar.gz
+*.rar
+
+# 用户配置文件（如果存在）
+config.local.*
+user_settings.json
+
+# 构建日志和临时文件
+build.log
+install.log
+error.log
+
+# 测试和调试文件
+test_*.py
+debug_*.py
+
+# 备份文件
+*.backup
+*.old
+*.orig
+
+# IDE 临时文件
+.vscode/settings.json
+.idea/workspace.xml
+
+# 系统临时文件
+.cache/
+.temp/
