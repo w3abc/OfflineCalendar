@@ -664,8 +664,15 @@ class MainWindow(QMainWindow):
         autostart_action = QAction("开机启动", self)
         autostart_action.setCheckable(True)
         autostart_action.setChecked(self.is_autostart_enabled())
-        autostart_action.triggered.connect(self.toggle_autostart)
+        autostart_action.triggered.connect(lambda checked: self.toggle_autostart(checked))
         tray_menu.addAction(autostart_action)
+
+        # 静默启动动作
+        silent_autostart_action = QAction("静默启动", self)
+        silent_autostart_action.setCheckable(True)
+        silent_autostart_action.setChecked(self.is_silent_autostart_enabled())
+        silent_autostart_action.triggered.connect(lambda checked: self.toggle_silent_autostart(checked))
+        tray_menu.addAction(silent_autostart_action)
 
         tray_menu.addSeparator()
 
@@ -714,6 +721,33 @@ class MainWindow(QMainWindow):
         """检查是否已启用开机启动"""
         desktop_file = self.get_autostart_desktop_file()
         return desktop_file.exists()
+
+    def is_silent_autostart_enabled(self):
+        """检查是否已启用静默启动"""
+        return self.settings.value("silent_autostart", False, type=bool)
+
+    def toggle_silent_autostart(self, enabled):
+        """切换静默启动设置"""
+        self.settings.setValue("silent_autostart", enabled)
+
+        # 如果开机启动已启用，则更新desktop文件以应用新的设置
+        if self.is_autostart_enabled():
+            print(f"静默启动设置已更新: {'启用' if enabled else '禁用'}")
+            # 重新生成开机启动文件
+            self.update_autostart_file()
+        else:
+            print("请先启用开机启动功能")
+
+    def update_autostart_file(self):
+        """更新开机启动文件"""
+        desktop_file = self.get_autostart_desktop_file()
+        if desktop_file.exists():
+            # 删除现有文件并重新创建
+            try:
+                desktop_file.unlink()
+                self.toggle_autostart(True)
+            except Exception as e:
+                print(f"更新开机启动文件失败: {e}")
 
     def toggle_autostart(self, enabled):
         """切换开机启动状态"""
@@ -785,10 +819,19 @@ class MainWindow(QMainWindow):
             else:
                 icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
 
+            # 为开机启动添加静默启动参数
+            silent_enabled = self.is_silent_autostart_enabled()
+            if hasattr(sys, 'frozen') and '/tmp/.mount_' not in executable_path and silent_enabled:
+                # AppImage 或其他打包版本且启用静默启动时，添加静默启动参数
+                exec_command = f"{executable_path} --silent"
+            else:
+                # 其他情况不添加静默参数
+                exec_command = executable_path
+
             desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=万年历本地版
-Exec={executable_path}
+Exec={exec_command}
 Icon={icon_path}
 Terminal=false
 Categories=Office;Calendar;
@@ -880,8 +923,22 @@ if __name__ == "__main__":
     app.setApplicationDisplayName("万年历本地版")
     app.setOrganizationName("OfflineCalendar")
 
+    # 检查是否为静默启动模式
+    silent_start = "--silent" in sys.argv or "--tray" in sys.argv
+
     window = MainWindow()
-    window.show()
+
+    # 如果不是静默启动，则显示主窗口
+    if not silent_start:
+        window.show()
+    else:
+        # 静默启动时，确保窗口最小化到托盘
+        if window.tray_icon and window.tray_icon.isVisible():
+            print("静默启动模式，程序已在系统托盘运行")
+        else:
+            # 如果系统不支持托盘，仍然显示窗口
+            print("系统不支持托盘，显示主窗口")
+            window.show()
 
     # 运行应用程序
     exit_code = app.exec()
