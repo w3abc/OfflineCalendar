@@ -20,6 +20,8 @@ appimage/appimagetool-*.AppImage
 appimage/squashfs-root/
 appimage/*.AppImage
 appimage/WanNianLi.AppDir/
+# 根目录的 AppImage 副本
+*万年历本地版*.AppImage
 
 # 安装脚本生成的文件
 wannianli-icon.png

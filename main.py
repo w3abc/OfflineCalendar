@@ -4,9 +4,10 @@ import json
 import os
 from datetime import datetime
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout, 
-    QGridLayout, QPushButton, QComboBox, QFrame, QDialog, QTextEdit, 
+    QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
+    QGridLayout, QPushButton, QComboBox, QFrame, QDialog, QTextEdit,
     QSpinBox, QMessageBox, QDialogButtonBox
 )
 from lunar_python import Solar, SolarMonth, Lunar
@@ -116,6 +117,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("万年历本地版")
         self.setObjectName("WanNianLiBenDiBan")
         self.setGeometry(100, 100, 1100, 700)
+
+        # 设置应用程序图标
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.selected_cell = None
         self.app = QApplication.instance()
         self.holiday_dates = {}
@@ -641,6 +647,12 @@ class ImportDialog(QDialog):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # 设置应用程序图标
+    icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
