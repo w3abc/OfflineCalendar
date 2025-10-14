@@ -21,7 +21,7 @@ source venv/bin/activate
 echo "🧹 清理旧文件..."
 rm -rf build/ dist/ *.spec
 rm -rf appimage/squashfs-root/
-rm -f appimage/*.AppImage
+rm -f appimage/万年历本地版-x86_64.AppImage  # 只删除产品AppImage，保留appimagetool
 rm -rf appimage/WanNianLi.AppDir/
 rm -f 万年历本地版-x86_64.AppImage wannianli-icon.png
 
@@ -68,6 +68,16 @@ exec "${HERE}/usr/bin/万年历本地版" "$@"
 EOF
 
 chmod +x appimage/WanNianLi.AppDir/AppRun
+
+# 下载 AppImageTool（如果不存在）
+if [ ! -f "appimage/appimagetool-x86_64.AppImage" ]; then
+    echo "📥 下载 AppImageTool..."
+    mkdir -p appimage
+    cd appimage
+    wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+    chmod +x appimagetool-x86_64.AppImage
+    cd ..
+fi
 
 # 生成 AppImage
 cd appimage

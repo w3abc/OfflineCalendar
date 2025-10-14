@@ -2,13 +2,14 @@ import sys
 import re
 import json
 import os
+from pathlib import Path
 from datetime import datetime
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
     QGridLayout, QPushButton, QComboBox, QFrame, QDialog, QTextEdit,
-    QSpinBox, QMessageBox, QDialogButtonBox
+    QSpinBox, QMessageBox, QDialogButtonBox, QSystemTrayIcon, QMenu
 )
 from lunar_python import Solar, SolarMonth, Lunar
 from lunar_python.util import HolidayUtil, LunarUtil, SolarUtil
@@ -125,6 +126,13 @@ class MainWindow(QMainWindow):
         self.selected_cell = None
         self.app = QApplication.instance()
         self.holiday_dates = {}
+
+        # 系统托盘相关
+        self.settings = QSettings("OfflineCalendar", "WanNianLi")
+        self.tray_icon = None
+
+        # 初始化系统托盘
+        self.setup_system_tray()
 
         # --- Date State ---
         today = datetime.now()
@@ -607,8 +615,169 @@ class MainWindow(QMainWindow):
             
             if year_changed:
                 self.update_holiday_combo()
-                
+
             self.draw_calendar()
+
+    def setup_system_tray(self):
+        """初始化系统托盘"""
+        # 检查系统是否支持系统托盘
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            print("系统不支持系统托盘")
+            return
+
+        # 获取应用程序图标
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        if not os.path.exists(icon_path):
+            print("找不到图标文件")
+            return
+
+        icon = QIcon(icon_path)
+        if icon.isNull():
+            print("无法加载图标")
+            return
+
+        # 创建系统托盘图标
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("万年历本地版")
+
+        # 创建托盘菜单
+        self.create_tray_menu()
+
+        # 连接托盘图标的点击事件
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+
+        # 显示托盘图标
+        self.tray_icon.show()
+
+    def create_tray_menu(self):
+        """创建系统托盘右键菜单"""
+        tray_menu = QMenu()
+
+        # 打开动作
+        show_action = QAction("打开", self)
+        show_action.triggered.connect(self.show_window)
+        tray_menu.addAction(show_action)
+
+        tray_menu.addSeparator()
+
+        # 开机启动动作
+        autostart_action = QAction("开机启动", self)
+        autostart_action.setCheckable(True)
+        autostart_action.setChecked(self.is_autostart_enabled())
+        autostart_action.triggered.connect(self.toggle_autostart)
+        tray_menu.addAction(autostart_action)
+
+        tray_menu.addSeparator()
+
+        # 退出动作
+        quit_action = QAction("退出", self)
+        quit_action.triggered.connect(self.quit_application)
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+
+    def on_tray_icon_activated(self, reason):
+        """处理托盘图标激活事件"""
+        if reason == QSystemTrayIcon.DoubleClick or reason == QSystemTrayIcon.Trigger:
+            # 双击或左键单击切换窗口显示/隐藏状态
+            self.toggle_window_visibility()
+
+    def toggle_window_visibility(self):
+        """切换窗口显示/隐藏状态"""
+        if self.isVisible():
+            # 如果窗口当前可见，则隐藏到托盘
+            self.hide_to_tray()
+        else:
+            # 如果窗口当前隐藏，则显示窗口
+            self.show_window()
+
+    def show_window(self):
+        """显示主窗口"""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def hide_to_tray(self):
+        """隐藏窗口到系统托盘"""
+        if self.tray_icon:
+            self.hide()
+            if not self.tray_icon.supportsMessages():
+                return
+            # 可以在这里添加提示消息
+            # self.tray_icon.showMessage("万年历", "程序已在系统托盘运行", QSystemTrayIcon.Information, 2000)
+
+    def get_autostart_desktop_file(self):
+        """获取开机启动桌面文件路径"""
+        return Path.home() / ".config" / "autostart" / "offlinecalendar.desktop"
+
+    def is_autostart_enabled(self):
+        """检查是否已启用开机启动"""
+        desktop_file = self.get_autostart_desktop_file()
+        return desktop_file.exists()
+
+    def toggle_autostart(self, enabled):
+        """切换开机启动状态"""
+        desktop_file = self.get_autostart_desktop_file()
+
+        if enabled:
+            # 创建开机启动
+            os.makedirs(desktop_file.parent, exist_ok=True)
+
+            # 获取当前可执行文件的路径
+            if hasattr(sys, 'frozen'):
+                # PyInstaller 打包后的路径
+                executable_path = sys.executable
+            else:
+                # 开发环境路径
+                executable_path = os.path.join(os.path.dirname(__file__), "main.py")
+                executable_path = f"python3 {executable_path}"
+
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Name=万年历本地版
+Exec={executable_path}
+Icon={os.path.join(os.path.dirname(__file__), "icon.png")}
+Terminal=false
+Categories=Office;Calendar;
+StartupNotify=true
+"""
+
+            try:
+                with open(desktop_file, 'w', encoding='utf-8') as f:
+                    f.write(desktop_content)
+                os.chmod(desktop_file, 0o644)
+                print("开机启动已启用")
+            except Exception as e:
+                print(f"启用开机启动失败: {e}")
+                # 如果有托盘，显示错误消息
+                if self.tray_icon and self.tray_icon.supportsMessages():
+                    self.tray_icon.showMessage("错误", "启用开机启动失败", QSystemTrayIcon.Critical, 3000)
+        else:
+            # 禁用开机启动
+            try:
+                if desktop_file.exists():
+                    desktop_file.unlink()
+                print("开机启动已禁用")
+            except Exception as e:
+                print(f"禁用开机启动失败: {e}")
+                if self.tray_icon and self.tray_icon.supportsMessages():
+                    self.tray_icon.showMessage("错误", "禁用开机启动失败", QSystemTrayIcon.Critical, 3000)
+
+    def quit_application(self):
+        """完全退出应用程序"""
+        # 退出Qt应用程序
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        """重写窗口关闭事件"""
+        # 如果系统托盘可用，则隐藏到托盘而不是关闭
+        if self.tray_icon and self.tray_icon.isVisible():
+            event.ignore()  # 忽略关闭事件
+            self.hide_to_tray()  # 隐藏到托盘
+        else:
+            # 如果系统托盘不可用，则正常关闭
+            event.accept()
+            QApplication.quit()
 
 
 class ImportDialog(QDialog):
@@ -653,6 +822,14 @@ if __name__ == "__main__":
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
+    # 设置应用程序信息
+    app.setApplicationName("万年历本地版")
+    app.setApplicationDisplayName("万年历本地版")
+    app.setOrganizationName("OfflineCalendar")
+
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+
+    # 运行应用程序
+    exit_code = app.exec()
+    sys.exit(exit_code)
