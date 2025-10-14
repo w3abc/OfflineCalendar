@@ -727,16 +727,69 @@ class MainWindow(QMainWindow):
             if hasattr(sys, 'frozen'):
                 # PyInstaller 打包后的路径
                 executable_path = sys.executable
+
+                # 检查是否是AppImage运行
+                if '/tmp/.mount_' in executable_path:
+                    # 如果是临时挂载路径，尝试找到实际的AppImage文件
+                    possible_paths = [
+                        Path.home() / ".local" / "bin" / "万年历本地版.AppImage",
+                        Path.home() / "Applications" / "万年历本地版.AppImage",
+                        Path("/opt") / "万年历本地版.AppImage",
+                    ]
+
+                    # 尝试通过proc文件系统找到真实路径
+                    try:
+                        current_process = Path(f"/proc/{os.getpid()}/exe")
+                        if current_process.exists():
+                            real_exe = current_process.readlink()
+                            if real_exe.endswith('.AppImage'):
+                                executable_path = real_exe
+                    except:
+                        pass
+
+                    # 如果找不到真实AppImage，使用第一个存在的路径
+                    if '/tmp/.mount_' in executable_path:
+                        for path in possible_paths:
+                            if path.exists():
+                                executable_path = str(path)
+                                break
+
+                        # 如果还是找不到，尝试使用当前工作目录的AppImage
+                        if '/tmp/.mount_' in executable_path:
+                            current_dir = Path(sys.argv[0] if sys.argv else ".").parent
+                            appimage_in_current = current_dir / "万年历本地版.AppImage"
+                            if appimage_in_current.exists():
+                                executable_path = str(appimage_in_current)
             else:
                 # 开发环境路径
                 executable_path = os.path.join(os.path.dirname(__file__), "main.py")
                 executable_path = f"python3 {executable_path}"
 
+            # 获取图标路径
+            if hasattr(sys, 'frozen'):
+                # 对于AppImage，优先使用系统图标目录中的图标
+                icon_paths = [
+                    Path.home() / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "wannianli.png",
+                    Path.home() / ".local" / "bin" / "icon.png",
+                    os.path.join(os.path.dirname(executable_path), "icon.png"),
+                ]
+
+                icon_path = None
+                for path in icon_paths:
+                    if path.exists():
+                        icon_path = str(path)
+                        break
+
+                if not icon_path:
+                    icon_path = icon_paths[0]  # 使用第一个作为默认
+            else:
+                icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+
             desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=万年历本地版
 Exec={executable_path}
-Icon={os.path.join(os.path.dirname(__file__), "icon.png")}
+Icon={icon_path}
 Terminal=false
 Categories=Office;Calendar;
 StartupNotify=true
