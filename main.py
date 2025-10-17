@@ -3,8 +3,8 @@ import re
 import json
 import os
 from pathlib import Path
-from datetime import datetime
-from PySide6.QtCore import Qt, Signal, QSettings
+from datetime import datetime, timedelta
+from PySide6.QtCore import Qt, Signal, QSettings, QTimer
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QHBoxLayout, QVBoxLayout,
@@ -133,6 +133,9 @@ class MainWindow(QMainWindow):
 
         # 初始化系统托盘
         self.setup_system_tray()
+
+        # 设置定时器用于日期更新
+        self.setup_date_timer()
 
         # --- Date State ---
         today = datetime.now()
@@ -588,18 +591,8 @@ class MainWindow(QMainWindow):
         self.draw_calendar()
 
     def go_to_today(self):
-        today = datetime.now()
-        current_year = int(self.year_combo.currentText())
-        current_month = int(self.month_combo.currentText())
-
-        self.year = today.year
-        self.month = today.month
-        self.day = today.day
-
-        if self.year == current_year and self.month == current_month:
-            self.on_day_selected(Solar.fromYmd(self.year, self.month, self.day))
-        else:
-            self.update_combo_boxes()
+        # 强制刷新到当前日期
+        self.refresh_calendar()
 
     def update_combo_boxes(self):
         old_year = int(self.year_combo.currentText())
@@ -700,6 +693,8 @@ class MainWindow(QMainWindow):
 
     def show_window(self):
         """显示主窗口"""
+        # 显示窗口前先检查并更新日期
+        self.check_and_update_date()
         self.show()
         self.raise_()
         self.activateWindow()
@@ -858,6 +853,60 @@ StartupNotify=true
                 print(f"禁用开机启动失败: {e}")
                 if self.tray_icon and self.tray_icon.supportsMessages():
                     self.tray_icon.showMessage("错误", "禁用开机启动失败", QSystemTrayIcon.Critical, 3000)
+
+    def setup_date_timer(self):
+        """设置日期更新定时器"""
+        # 每分钟检查一次日期变化的定时器
+        self.date_timer = QTimer(self)
+        self.date_timer.timeout.connect(self.check_and_update_date)
+        self.date_timer.start(60000)  # 60秒 = 1分钟
+
+        # 设置午夜精确刷新定时器
+        self.schedule_midnight_refresh()
+
+    def schedule_midnight_refresh(self):
+        """安排午夜精确刷新"""
+        self.midnight_timer = QTimer(self)
+        self.midnight_timer.setSingleShot(True)
+        self.midnight_timer.timeout.connect(self.on_midnight_refresh)
+
+        # 计算到下一个午夜的时间
+        now = datetime.now()
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        time_until_midnight = (tomorrow - now).total_seconds() * 1000  # 转换为毫秒
+
+        self.midnight_timer.start(int(time_until_midnight))
+
+    def on_midnight_refresh(self):
+        """午夜刷新处理"""
+        self.refresh_calendar()
+        # 重新安排下一个午夜刷新
+        self.schedule_midnight_refresh()
+
+    def check_and_update_date(self):
+        """检查日期是否发生变化，如果变化则更新"""
+        today = datetime.now()
+        current_date = today.strftime("%Y-%m-%d")
+
+        # 获取当前存储的日期
+        stored_date = f"{self.year}-{self.month:02d}-{self.day:02d}"
+
+        if current_date != stored_date:
+            # 日期已变化，更新到今天
+            self.year = today.year
+            self.month = today.month
+            self.day = today.day
+            self.update_combo_boxes()
+            self.draw_calendar()
+
+    def refresh_calendar(self):
+        """强制刷新日历显示"""
+        today = datetime.now()
+        self.year = today.year
+        self.month = today.month
+        self.day = today.day
+        self.update_combo_boxes()
+        self.draw_calendar()
 
     def quit_application(self):
         """完全退出应用程序"""
