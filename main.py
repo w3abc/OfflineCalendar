@@ -176,80 +176,249 @@ class MainWindow(QMainWindow):
         data_string = ""
         name_to_index = {name: i for i, name in enumerate(HolidayUtil.NAMES)}
 
-        holiday_configs = {
-            "元旦节": {
-                "pattern": r"元旦：(\d+)月(\d+)日.*?放假",
-                "groups": ["m", "d"],
-            },
-            "春节": {
-                "pattern": r"春节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假.*?((?:.|\n)+?上班)",
-                "groups": ["sm", "sd", "em", "ed", "work"],
-            },
-            "清明节": {
-                "pattern": r"清明节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假",
-                "groups": ["sm", "sd", "ed"],
-            },
-            "劳动节": {
-                "pattern": r"劳动节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假.*?((?:.|\n)+?上班)",
-                "groups": ["sm", "sd", "ed", "work"],
-            },
-            "端午节": {
-                "pattern": r"端午节：(\d+)月(\d+)日.*?至(\d+)月(\d+)日.*?放假",
-                "groups": ["sm", "sd", "em", "ed"],
-            },
-            "国庆中秋": {
-                "pattern": r"国庆节、中秋节：(\d+)月(\d+)日.*?至\s*(\d+)日.*?放假.*?((?:.|\n)+?上班)",
-                "groups": ["sm", "sd", "ed", "work"],
-            }
-        }
+        # 解析所有节假日行
+        all_vacation_days = []
+        all_work_days = []
+        holiday_names_list = []  # 用于界面下拉框的节假日名称列表
 
-        for holiday_name, config in holiday_configs.items():
-            match = re.search(config["pattern"], text, re.DOTALL)
-            if not match:
+        # 按行解析，支持任意中文数字（一、二、三...十）
+        lines = text.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
                 continue
 
-            parts = {name: val for name, val in zip(config["groups"], match.groups())}
-            
-            vacation_days = []
-            work_days = []
-
-            try:
-                sm = int(parts.get("sm", parts.get("m")))
-                sd = int(parts.get("sd", parts.get("d")))
-                em = int(parts.get("em", sm))
-                ed = int(parts.get("ed", sd))
-
-                start_date = datetime(year, sm, sd)
-                end_date = datetime(year, em, ed)
-                current_date = start_date
-                while current_date <= end_date:
-                    vacation_days.append(current_date)
-                    current_date += timedelta(days=1)
-            except (ValueError, TypeError):
+            # 匹配格式：[中文数字]、[节日名]：[安排文本]
+            holiday_match = re.match(r'^([一二三四五六七八九十]+)、([^：]+)：(.+)$', line)
+            if not holiday_match:
                 continue
 
-            if "work" in parts:
-                work_days_text = parts.get("work", "")
-                work_day_matches = re.findall(r"(\d+)月(\d+)日", work_days_text)
-                for wm, wd in work_day_matches:
-                    work_days.append(datetime(year, int(wm), int(wd)))
+            chinese_number, holiday_name, arrangement = holiday_match.groups()
+            holiday_name = holiday_name.strip()
+            arrangement = arrangement.strip()
 
+            # 添加到节假日名称列表（用于界面下拉框）
+            holiday_names_list.append(holiday_name)
+
+            # 分割安排文本：放假日期文本 和 调休文本
+            parts = arrangement.split('。', 1)  # 按第一个句号分割
+            vacation_text = parts[0]
+            adjust_text = parts[1] if len(parts) > 1 else ""
+
+            # 从放假日期文本中提取日期范围
+            vacation_dates = self._extract_vacation_dates(vacation_text, year)
+
+            # 从调休文本中提取上班日（仅当有调休文本时）
+            if adjust_text:
+                work_dates = self._extract_work_days(adjust_text, year)
+                all_work_days.extend(work_dates)
+
+            # 为每个节假日添加假期日期
+            # 注意：这里直接使用原始节日名称，不做映射
+            for date_obj in vacation_dates:
+                all_vacation_days.append((date_obj, holiday_name))
+
+        # 为界面下拉框提供节假日名称
+        self.available_holidays = sorted(list(set(holiday_names_list)))
+
+        # 生成数据字符串
+        for date_obj, holiday_name in all_vacation_days:
+            # 尝试映射到HolidayUtil的标准名称，如果无法映射则跳过
             name_index = name_to_index.get(holiday_name)
             if name_index is None:
-                continue
+                # 尝试常见映射
+                mapping = {
+                    "元旦": "元旦节",
+                    "春节": "春节",
+                    "清明节": "清明节",
+                    "劳动节": "劳动节",
+                    "端午节": "端午节",
+                    "中秋节": "中秋节",
+                    "国庆节": "国庆节",
+                    "国庆节、中秋节": "国庆中秋",
+                    "中秋节、国庆节": "国庆中秋"
+                }
+                name_index = name_to_index.get(mapping.get(holiday_name))
+                if name_index is None:
+                    continue
 
-            # Use the first day of the vacation as the target date for simplicity and consistency
-            target_date_str = vacation_days[0].strftime("%Y%m%d")
+            day_str = date_obj.strftime("%Y%m%d")
+            target_date_str = day_str
+            data_string += f"{day_str}{name_index}1{target_date_str}"
 
-            for day in vacation_days:
-                day_str = day.strftime("%Y%m%d")
-                data_string += f"{day_str}{name_index}1{target_date_str}"
-            
-            for day in work_days:
-                day_str = day.strftime("%Y%m%d")
-                data_string += f"{day_str}{name_index}0{target_date_str}"
+        # 为每个上班日找到对应的节假日
+        work_to_holiday = {}
+        for work_date in all_work_days:
+            # 查找最近的节假日
+            closest_holiday = None
+            min_distance = float('inf')
+
+            for vac_date, vac_name in all_vacation_days:
+                distance = abs((work_date - vac_date).days)
+                if distance < min_distance and distance <= 30:  # 30天内的上班日才关联
+                    min_distance = distance
+                    closest_holiday = vac_name
+
+            if closest_holiday:
+                work_to_holiday[work_date] = closest_holiday
+
+        for work_date, holiday_name in work_to_holiday.items():
+            # 映射到HolidayUtil的标准名称
+            mapping = {
+                "元旦": "元旦节",
+                "春节": "春节",
+                "清明节": "清明节",
+                "劳动节": "劳动节",
+                "端午节": "端午节",
+                "中秋节": "中秋节",
+                "国庆节": "国庆节",
+                "国庆节、中秋节": "国庆中秋",
+                "中秋节、国庆节": "国庆中秋"
+            }
+            mapped_holiday = mapping.get(holiday_name)
+            if mapped_holiday:
+                name_index = name_to_index.get(mapped_holiday)
+                if name_index is not None:
+                    day_str = work_date.strftime("%Y%m%d")
+                    # 找到对应的假期第一天作为目标日期
+                    target_date_str = None
+                    for vac_date, vac_name in all_vacation_days:
+                        if vac_name == holiday_name:
+                            target_date_str = vac_date.strftime("%Y%m%d")
+                            break
+                    if target_date_str:
+                        data_string += f"{day_str}{name_index}0{target_date_str}"
 
         return data_string
+
+    def _extract_vacation_dates(self, vacation_text, year):
+        """
+        从放假日期文本中提取所有日期
+
+        Args:
+            vacation_text (str): 放假日期文本部分
+            year (int): 年份
+
+        Returns:
+            list: datetime 对象列表
+        """
+        dates = []
+
+        # 清理文本，去掉括号内容和无关描述
+        cleaned_text = re.sub(r'（[^）]*）', '', vacation_text)
+        cleaned_text = re.sub(r'\([^)]*\)', '', cleaned_text)
+        cleaned_text = re.sub(r'放假调休，共\d+天', '', cleaned_text)
+        cleaned_text = re.sub(r'放假，共\d+天', '', cleaned_text)
+
+        # 多种日期格式模式，按优先级排序
+        patterns = [
+            # 跨年格式：2022年12月31日至2023年1月2日
+            (r'(\d{4})年(\d+)月(\d+)日至(\d{4})年(\d+)月(\d+)日', 'cross_year'),
+            # 跨月格式：1月28日至2月4日
+            (r'(\d+)月(\d+)日至(\d+)月(\d+)日', 'cross_month'),
+            # 同月跨日格式：4月4日至6日
+            (r'(\d+)月(\d+)日至(\d+)日', 'same_month'),
+            # 单日格式：1月1日
+            (r'(\d+)月(\d+)日', 'single_day')
+        ]
+
+        for pattern, pattern_type in patterns:
+            matches = re.findall(pattern, cleaned_text)
+            if not matches:
+                continue
+
+            for match in matches:
+                try:
+                    if pattern_type == 'cross_year':
+                        start_date = datetime(int(match[0]), int(match[1]), int(match[2]))
+                        end_date = datetime(int(match[3]), int(match[4]), int(match[5]))
+                    elif pattern_type == 'cross_month':
+                        start_date = datetime(year, int(match[0]), int(match[1]))
+                        end_date = datetime(year, int(match[2]), int(match[3]))
+                    elif pattern_type == 'same_month':
+                        start_date = datetime(year, int(match[0]), int(match[1]))
+                        end_date = datetime(year, int(match[0]), int(match[2]))
+                    elif pattern_type == 'single_day':
+                        start_date = datetime(year, int(match[0]), int(match[1]))
+                        end_date = start_date
+
+                    # 生成日期范围
+                    current_date = start_date
+                    while current_date <= end_date:
+                        if current_date not in dates:  # 避免重复
+                            dates.append(current_date)
+                        current_date += timedelta(days=1)
+
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+            # 如果找到了匹配，就不再尝试其他模式
+            if matches:
+                break
+
+        return sorted(dates)
+
+    def _extract_work_days(self, adjust_text, year):
+        """
+        从调休文本中提取上班日期
+
+        Args:
+            adjust_text (str): 调休文本部分
+            year (int): 年份
+
+        Returns:
+            list: datetime 对象列表
+        """
+        work_dates = []
+
+        # 清理文本，去掉最后的句号
+        cleaned_text = adjust_text.rstrip('。')
+
+        # 先尝试直接匹配包含"上班"的日期
+        direct_patterns = [
+            r'(\d+)月(\d+)日（?(?:星期|周)?[一二三四五六日日]?）?\s*上班',
+            r'(\d+)月(\d+)日\([^)]*\)\s*上班',
+            r'(\d+)月(\d+)日（[^）]*）\s*上班',
+            r'(\d+)月(\d+)日\s*上班'
+        ]
+
+        for pattern in direct_patterns:
+            matches = re.findall(pattern, cleaned_text)
+            for month, day in matches:
+                try:
+                    work_date = datetime(year, int(month), int(day))
+                    if work_date not in work_dates:  # 避免重复
+                        work_dates.append(work_date)
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+        # 然后处理"X月X日（周X）、X月X日上班"这种格式
+        # 将文本按逗号分割，检查每段是否包含上班信息
+        parts = re.split(r'[，、]', cleaned_text)
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if not part:
+                continue
+
+            # 如果当前部分包含"上班"，已经处理过了
+            if '上班' in part:
+                continue
+
+            # 如果当前部分不包含"上班"，但下一部分包含"上班"，
+            # 那么当前部分可能也是上班日
+            if i + 1 < len(parts) and '上班' in parts[i + 1]:
+                # 尝试从当前部分提取日期
+                date_pattern = r'(\d+)月(\d+)日（?(?:星期|周)?[一二三四五六日日]?）?'
+                matches = re.findall(date_pattern, part)
+                for month, day in matches:
+                    try:
+                        work_date = datetime(year, int(month), int(day))
+                        if work_date not in work_dates:  # 避免重复
+                            work_dates.append(work_date)
+                    except (ValueError, TypeError, IndexError):
+                        continue
+
+        return sorted(work_dates)
 
     def on_import_holidays_clicked(self):
         dialog = ImportDialog(self, self.year)
@@ -547,20 +716,45 @@ class MainWindow(QMainWindow):
         self.holiday_dates.clear()
         self.holiday_combo.addItem("选择法定节假日", None)
 
-        holidays = HolidayUtil.getHolidays(self.year)
-        if holidays:
-            for h in holidays:
-                # Only add the main holiday day, not the compensated work days
-                if not h.isWork() and h.getDay() == h.getTarget():
-                    name = h.getName()
-                    if name not in self.holiday_dates:
-                        date_str = h.getDay()
-                        parts = date_str.split('-')
-                        year = int(parts[0])
-                        month = int(parts[1])
-                        day = int(parts[2])
-                        self.holiday_dates[name] = Solar.fromYmd(year, month, day)
-        
+        # 优先使用导入的自定义节假日，如果没有则使用默认节假日
+        holiday_names = getattr(self, 'available_holidays', None)
+
+        if holiday_names:
+            # 使用导入的节假日名称
+            for name in holiday_names:
+                if name not in self.holiday_dates:
+                    # 查找该节假日的第一天作为代表日期
+                    # 这里可以根据需要进一步优化
+                    holidays = HolidayUtil.getHolidays(self.year)
+                    if holidays:
+                        for h in holidays:
+                            if not h.isWork() and h.getDay() == h.getTarget():
+                                holiday_name = h.getName()
+                                # 简单的名称匹配，可以改进
+                                if name in holiday_name or holiday_name in name:
+                                    date_str = h.getDay()
+                                    parts = date_str.split('-')
+                                    year = int(parts[0])
+                                    month = int(parts[1])
+                                    day = int(parts[2])
+                                    self.holiday_dates[name] = Solar.fromYmd(year, month, day)
+                                    break
+        else:
+            # 使用默认的节假日
+            holidays = HolidayUtil.getHolidays(self.year)
+            if holidays:
+                for h in holidays:
+                    # Only add the main holiday day, not the compensated work days
+                    if not h.isWork() and h.getDay() == h.getTarget():
+                        name = h.getName()
+                        if name not in self.holiday_dates:
+                            date_str = h.getDay()
+                            parts = date_str.split('-')
+                            year = int(parts[0])
+                            month = int(parts[1])
+                            day = int(parts[2])
+                            self.holiday_dates[name] = Solar.fromYmd(year, month, day)
+
         for name in self.holiday_dates.keys():
             self.holiday_combo.addItem(name)
 
@@ -591,8 +785,13 @@ class MainWindow(QMainWindow):
         self.draw_calendar()
 
     def go_to_today(self):
-        # 强制刷新到当前日期
-        self.refresh_calendar()
+        # 强制跳转到当前日期
+        today = datetime.now()
+        self.year = today.year
+        self.month = today.month
+        self.day = today.day
+        self.update_combo_boxes()
+        self.draw_calendar()
 
     def update_combo_boxes(self):
         old_year = int(self.year_combo.currentText())
@@ -693,8 +892,8 @@ class MainWindow(QMainWindow):
 
     def show_window(self):
         """显示主窗口"""
-        # 显示窗口前先检查并更新日期
-        self.check_and_update_date()
+        # 显示窗口前先检查并更新日期（使用智能检查）
+        self.check_date_on_show()
         self.show()
         self.raise_()
         self.activateWindow()
@@ -856,12 +1055,12 @@ StartupNotify=true
 
     def setup_date_timer(self):
         """设置日期更新定时器"""
-        # 每分钟检查一次日期变化的定时器
-        self.date_timer = QTimer(self)
-        self.date_timer.timeout.connect(self.check_and_update_date)
-        self.date_timer.start(60000)  # 60秒 = 1分钟
+        # 注释掉每分钟检查的定时器，避免自动跳转
+        # self.date_timer = QTimer(self)
+        # self.date_timer.timeout.connect(self.check_and_update_date)
+        # self.date_timer.start(60000)  # 60秒 = 1分钟
 
-        # 设置午夜精确刷新定时器
+        # 只保留午夜精确刷新定时器
         self.schedule_midnight_refresh()
 
     def schedule_midnight_refresh(self):
@@ -884,7 +1083,7 @@ StartupNotify=true
         self.schedule_midnight_refresh()
 
     def check_and_update_date(self):
-        """检查日期是否发生变化，如果变化则更新"""
+        """检查日期是否发生变化，如果变化则显示提示"""
         today = datetime.now()
         current_date = today.strftime("%Y-%m-%d")
 
@@ -892,21 +1091,25 @@ StartupNotify=true
         stored_date = f"{self.year}-{self.month:02d}-{self.day:02d}"
 
         if current_date != stored_date:
-            # 日期已变化，更新到今天
+            # 日期已变化，但不再自动切换，只在状态栏显示提示
+            # 如果当前显示的不是今天，可以在状态栏显示一个提示
+            # 或者完全忽略，让用户手动切换
+            pass  # 不做自动切换，保持用户当前查看的月份
+
+    def refresh_calendar(self):
+        """刷新日历显示，但保持用户当前查看的月份"""
+        today = datetime.now()
+
+        # 只有当用户当前正在查看今天的月份时才更新到今天
+        if self.year == today.year and self.month == today.month:
             self.year = today.year
             self.month = today.month
             self.day = today.day
             self.update_combo_boxes()
             self.draw_calendar()
-
-    def refresh_calendar(self):
-        """强制刷新日历显示"""
-        today = datetime.now()
-        self.year = today.year
-        self.month = today.month
-        self.day = today.day
-        self.update_combo_boxes()
-        self.draw_calendar()
+        else:
+            # 如果用户正在查看其他月份，只刷新日历显示但不改变月份
+            self.draw_calendar()
 
     def quit_application(self):
         """完全退出应用程序"""
@@ -923,6 +1126,29 @@ StartupNotify=true
             # 如果系统托盘不可用，则正常关闭
             event.accept()
             QApplication.quit()
+
+    def showEvent(self, event):
+        """重写窗口显示事件，在窗口显示时检查日期"""
+        super().showEvent(event)
+        self.check_date_on_show()
+
+    def check_date_on_show(self):
+        """在窗口显示时检查是否需要更新日期"""
+        today = datetime.now()
+        current_date = today.strftime("%Y-%m-%d")
+        stored_date = f"{self.year}-{self.month:02d}-{self.day:02d}"
+
+        # 如果存储的日期不是今天，说明可能已经跨天了
+        if current_date != stored_date:
+            # 如果用户当前查看的月份不是今天的月份，不做自动切换
+            # 如果用户正在查看今天的月份但日期不对，则更新到今天
+            if self.year == today.year and self.month == today.month:
+                self.year = today.year
+                self.month = today.month
+                self.day = today.day
+                self.update_combo_boxes()
+                self.draw_calendar()
+            # 如果用户查看的是其他月份，保持不变，让用户手动切换
 
 
 class ImportDialog(QDialog):

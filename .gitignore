@@ -91,3 +91,4 @@ debug_*.py
 # 系统临时文件
 .cache/
 .temp/
+gwy
